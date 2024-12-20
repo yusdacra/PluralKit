@@ -32,3 +32,4 @@ recipe.json
 .docker-bin/
 .nix-dev-data
 .direnv
+result
