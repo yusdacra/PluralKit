@@ -20,6 +20,7 @@ node_modules/
 
 # User configuration
 .env
+.envrc
 pluralkit.conf
 pluralkit.*.conf
 *.DotSettings.user
@@ -29,3 +30,5 @@ logs/
 .version
 recipe.json
 .docker-bin/
+.nix-dev-data
+.direnv
