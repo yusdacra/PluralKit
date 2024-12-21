@@ -135,7 +135,6 @@
                       exec ${mkBotEnv "dotnet build -c Release -o obj/"}/bin/env
                     '';
                   };
-                  ready_log_line = "Successfully tagged";
                 };
                 pluralkit-bot = {
                   command = pkgs.writeShellApplication {
@@ -176,7 +175,6 @@
                         exec cargo build --package gateway
                       '';
                     };
-                    ready_log_line = "Finished `dev` profile";
                   };
                 pluralkit-gateway = {
                   command = pkgs.writeShellApplication {
@@ -190,7 +188,7 @@
                   };
                   depends_on.postgres.condition = "process_healthy";
                   depends_on.redis.condition = "process_healthy";
-                  depends_on.pluralkit-gateway-init.condition = "process_log_ready";
+                  depends_on.pluralkit-gateway-init.condition = "process_completed_successfully";
                   # configure health checks
                   liveness_probe.exec.command = ''curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/stats | grep "302"'';
                   liveness_probe.period_seconds = 5;
