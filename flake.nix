@@ -7,11 +7,15 @@
     systems.url = "github:nix-systems/x86_64-linux";
     process-compose.url = "github:Platonic-Systems/process-compose-flake";
     services.url = "github:juspay/services-flake";
-    d2n.url = "github:nix-community/dream2nix/rust-cargo-vendor/git-replace-workspace-attributes";
+    d2n.url = "github:nix-community/dream2nix";
     d2n.inputs.nixpkgs.follows = "nixpkgs";
     nci.url = "github:yusdacra/nix-cargo-integration";
+    nci.inputs.parts.follows = "parts";
     nci.inputs.nixpkgs.follows = "nixpkgs";
     nci.inputs.dream2nix.follows = "d2n";
+    treefmt.url = "github:numtide/treefmt-nix";
+    treefmt.inputs.nixpkgs.follows = "nixpkgs";
+    flake-compat.url = "https://flakehub.com/f/edolstra/flake-compat/1.tar.gz";
   };
 
   outputs =
@@ -21,6 +25,7 @@
       imports = [
         inp.process-compose.flakeModule
         inp.nci.flakeModule
+        inp.treefmt.flakeModule
       ];
       perSystem =
         {
@@ -48,6 +53,11 @@
             config.permittedInsecurePackages = [ "dotnet-sdk-6.0.428" ];
           };
 
+          treefmt = {
+            projectRootFile = "flake.nix";
+            programs.nixfmt.enable = true;
+          };
+
           nci.toolchainConfig = {
             channel = "nightly";
           };
@@ -63,7 +73,6 @@
             };
           };
 
-          formatter = pkgs.nixfmt-rfc-style;
           devShells = {
             default = rustOutputs."pluralkit-services".devShell;
           };
@@ -94,36 +103,63 @@
             settings.processes =
               let
                 procCfg = composeCfg.settings.processes;
+                mkBotEnv =
+                  cmd:
+                  pkgs.buildFHSEnv {
+                    name = "env";
+                    targetPkgs =
+                      pkgs: with pkgs; [
+                        coreutils
+                        git
+                        dotnet-sdk_6
+                        gcc
+                        protobuf
+                        omnisharp-roslyn
+                      ];
+                    runScript = cmd;
+                  };
               in
               {
-                pluralkit-bot = {
+                pluralkit-bot-init = {
                   command = pkgs.writeShellApplication {
-                    name = "pluralkit-bot";
-                    runtimeInputs = with pkgs; [
-                      coreutils
-                      podman
+                    name = "pluralkit-bot-init";
+                    runtimeInputs = [
+                      pkgs.coreutils
+                      pkgs.git
                     ];
                     text = ''
                       ${sourceDotenv}
                       set -x
                       ${pluralkitConfCheck}
-                      podman build --tag='pluralkit' .
                       mkdir -p "${dataDir}/pluralkit/log"
-                      exec podman run -t --volume ./pluralkit.conf:/app/pluralkit.conf:ro --volume ${dataDir}/pluralkit/log:/var/log/pluralkit --net=host 'pluralkit'
+                      exec ${mkBotEnv "dotnet build -c Release -o obj/"}/bin/env
                     '';
                   };
+                  ready_log_line = "Successfully tagged";
+                };
+                pluralkit-bot = {
+                  command = pkgs.writeShellApplication {
+                    name = "pluralkit-bot";
+                    runtimeInputs = [ pkgs.coreutils ];
+                    text = ''
+                      ${sourceDotenv}
+                      set -x
+                      exec ${mkBotEnv "dotnet obj/PluralKit.Bot.dll"}/bin/env
+                    '';
+                  };
+                  depends_on.pluralkit-bot-init.condition = "process_completed_successfully";
                   depends_on.postgres.condition = "process_healthy";
                   depends_on.redis.condition = "process_healthy";
                   depends_on.pluralkit-gateway.condition = "process_healthy";
                   shutdown.signal = 9; # KILL
                 };
-                pluralkit-gateway =
+                pluralkit-gateway-init =
                   let
                     shell = rustOutputs."gateway".devShell;
                   in
                   {
                     command = pkgs.writeShellApplication {
-                      name = "pluralkit-gateway";
+                      name = "pluralkit-gateway-init";
                       runtimeInputs =
                         (with pkgs; [
                           curl
@@ -137,15 +173,31 @@
                         ${sourceDotenv}
                         set -x
                         ${pluralkitConfCheck}
-                        exec cargo run --package gateway
+                        exec cargo build --package gateway
                       '';
                     };
-                    depends_on.postgres.condition = "process_healthy";
-                    depends_on.redis.condition = "process_healthy";
-                    # configure health checks
-                    liveness_probe.exec.command = ''curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/stats | grep "302"'';
-                    readiness_probe.exec.command = procCfg.pluralkit-gateway.liveness_probe.exec.command;
+                    ready_log_line = "Finished `dev` profile";
                   };
+                pluralkit-gateway = {
+                  command = pkgs.writeShellApplication {
+                    name = "pluralkit-gateway";
+                    runtimeInputs = with pkgs; [ coreutils ];
+                    text = ''
+                      ${sourceDotenv}
+                      set -x
+                      exec target/debug/gateway
+                    '';
+                  };
+                  depends_on.postgres.condition = "process_healthy";
+                  depends_on.redis.condition = "process_healthy";
+                  depends_on.pluralkit-gateway-init.condition = "process_log_ready";
+                  # configure health checks
+                  liveness_probe.exec.command = ''curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/stats | grep "302"'';
+                  liveness_probe.period_seconds = 5;
+                  readiness_probe.exec.command = procCfg.pluralkit-gateway.liveness_probe.exec.command;
+                  readiness_probe.period_seconds = 5;
+                  readiness_probe.initial_delay_seconds = 3;
+                };
               };
           };
         };
