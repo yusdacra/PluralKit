@@ -118,6 +118,33 @@
                       ];
                     runScript = cmd;
                   };
+                mkServiceInitProcess =
+                  {
+                    name,
+                    inputs ? [ ],
+                    ...
+                  }:
+                  let
+                    shell = rustOutputs.${name}.devShell;
+                  in
+                  {
+                    command = pkgs.writeShellApplication {
+                      name = "pluralkit-${name}-init";
+                      runtimeInputs =
+                        (with pkgs; [
+                          coreutils
+                          shell.stdenv.cc
+                        ])
+                        ++ shell.nativeBuildInputs
+                        ++ inputs;
+                      text = ''
+                        ${sourceDotenv}
+                        set -x
+                        ${pluralkitConfCheck}
+                        exec cargo build --package ${name}
+                      '';
+                    };
+                  };
               in
               {
                 pluralkit-bot-init = {
@@ -150,36 +177,21 @@
                   depends_on.postgres.condition = "process_healthy";
                   depends_on.redis.condition = "process_healthy";
                   depends_on.pluralkit-gateway.condition = "process_healthy";
-                  shutdown.signal = 9; # KILL
+                  # TODO: add liveness check
+                  ready_log_line = "Received Ready";
                 };
-                pluralkit-gateway-init =
-                  let
-                    shell = rustOutputs."gateway".devShell;
-                  in
-                  {
-                    command = pkgs.writeShellApplication {
-                      name = "pluralkit-gateway-init";
-                      runtimeInputs =
-                        (with pkgs; [
-                          curl
-                          gnugrep
-                          coreutils
-                          protobuf
-                          shell.stdenv.cc
-                        ])
-                        ++ shell.nativeBuildInputs;
-                      text = ''
-                        ${sourceDotenv}
-                        set -x
-                        ${pluralkitConfCheck}
-                        exec cargo build --package gateway
-                      '';
-                    };
-                  };
+                pluralkit-gateway-init = mkServiceInitProcess {
+                  name = "gateway";
+                  inputs = [ pkgs.protobuf ];
+                };
                 pluralkit-gateway = {
                   command = pkgs.writeShellApplication {
                     name = "pluralkit-gateway";
-                    runtimeInputs = with pkgs; [ coreutils ];
+                    runtimeInputs = with pkgs; [
+                      coreutils
+                      curl
+                      gnugrep
+                    ];
                     text = ''
                       ${sourceDotenv}
                       set -x
